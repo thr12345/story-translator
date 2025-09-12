@@ -5,7 +5,7 @@
  * 1. Accept input in html / markdown / epub.
  * 2. (Optionally) convert referenced images to webp quality 90.
  * 3. Convert input to intermediary Markdown via Pandoc (unless already Markdown).
- * 4. Normalize image references to standard markdown: ![Alt](path/to.webp)
+ * 4. Normalize image references to standard markdown: ![](path/to.webp) (ALT TEXT REMOVED PER LATEST REQUIREMENT)
  * 5. Retrieve OpenRouter API key (arg > env > config file > interactive prompt).
  * 6. Send markdown to OpenRouter for translation with defined prompts.
  * 7. Convert translated markdown to output format (markdown or epub2).
@@ -17,6 +17,8 @@
  *
  * NOTE: This is a first-pass implementation skeleton focusing on structure,
  *       logging, and flow. Some heuristics can be refined in subsequent passes.
+ *
+ * UPDATE: Alt text from HTML images is now stripped so intermediary markdown uses empty alt: ![](...)
  */
 
 import { promises as fs } from "fs";
@@ -253,10 +255,8 @@ function convertHtmlImgToMarkdown(content: string): string {
   return content.replace(/<img\b([^>]*?)\/?>/gi, (_match, attrs) => {
     const srcMatch = attrs.match(/\bsrc=["']([^"']+)["']/i);
     if (!srcMatch) return _match;
-    const altMatch = attrs.match(/\balt=["']([^"']*)["']/i);
     const src = srcMatch[1];
-    const alt = altMatch ? altMatch[1] : "Image";
-    return `![${alt}](${src})`;
+    return `![](${src})`;
   });
 }
 
@@ -536,8 +536,10 @@ export async function translateStory(
     let md = await fs.readFile(ctx.intermediateMarkdown, "utf8");
     const before = md;
 
-    // Convert raw <img> tags to markdown image syntax
+    // Convert raw <img> tags to markdown image syntax (empty alt)
     md = convertHtmlImgToMarkdown(md);
+    // Strip any existing alt text in already-converted markdown images: ![something](...)
+    md = md.replace(/!\[[^\]]*?\]\(([^)]+)\)/g, "![]($1)");
 
     // Strip lingering <figure> wrappers produced by pandoc around images:
     // Pattern examples we want to reduce:
@@ -558,11 +560,52 @@ export async function translateStory(
       return imgTag ? convertHtmlImgToMarkdown(imgTag[0]) : frag;
     });
 
-    // Attempt to capture footer content if input was HTML and it is missing from the markdown.
-    // We look for typical footer containers: <footer>, elements with class/footer id.
+    // Attempt to capture header & footer content if input was HTML and they are missing from the markdown.
+    // We look for typical header containers first (<header>, elements with class/id containing "header"),
+    // then footer containers (<footer>, elements with class/id containing "footer").
     if (ctx.inputFormat === "html") {
       try {
         const originalHtml = await fs.readFile(absInput, "utf8");
+
+        // -------- Header Extraction --------
+        const headerMatch =
+          originalHtml.match(/<header[\s\S]*?<\/header>/i) ||
+          originalHtml.match(
+            /<div[^>]+class=["'][^"']*header[^"']*["'][\s\S]*?<\/div>/i,
+          ) ||
+          originalHtml.match(
+            /<section[^>]+class=["'][^"']*header[^"']*["'][\s\S]*?<\/section>/i,
+          ) ||
+          originalHtml.match(/<div[^>]+id=["']header["'][\s\S]*?<\/div>/i);
+
+        if (headerMatch) {
+          let headerBlock = headerMatch[0];
+          headerBlock = convertHtmlImgToMarkdown(headerBlock)
+            .replace(/!\[[^\]]*?\]\(([^)]+)\)/g, "![]($1)") // enforce empty alt
+            .replace(
+              /<\/?(div|section|header|span|p|br|hr|nav)[^>]*>/gi,
+              (t) => {
+                if (/^<br/i.test(t)) return "\n";
+                if (/^<hr/i.test(t)) return "\n\n---\n\n";
+                return "\n";
+              },
+            )
+            .replace(/\n{3,}/g, "\n\n")
+            .trim();
+
+          // If header content (first 40 chars) not already present near start, prepend it.
+          if (
+            headerBlock &&
+            !md.slice(0, 400).includes(headerBlock.slice(0, 40))
+          ) {
+            md = headerBlock + "\n\n---\n\n" + md.trimStart();
+            consola.debug(
+              "Prepended header content extracted from original HTML.",
+            );
+          }
+        }
+
+        // -------- Footer Extraction (existing logic retained) --------
         const footerMatch =
           originalHtml.match(/<footer[\s\S]*?<\/footer>/i) ||
           originalHtml.match(
@@ -573,11 +616,9 @@ export async function translateStory(
           ) ||
           originalHtml.match(/<div[^>]+id=["']footer["'][\s\S]*?<\/div>/i);
         if (footerMatch) {
-          // Convert any images in footer to markdown too
           let footerBlock = footerMatch[0];
-          footerBlock = convertHtmlImgToMarkdown(footerBlock);
-          // Very lightweight HTML tag strip for common block tags; leave inline emphasis.
-          footerBlock = footerBlock
+          footerBlock = convertHtmlImgToMarkdown(footerBlock)
+            .replace(/!\[[^\]]*?\]\(([^)]+)\)/g, "![]($1)")
             .replace(/<\/?(div|section|footer|span|p|br|hr)[^>]*>/gi, (t) => {
               if (/^<br/i.test(t)) return "\n";
               if (/^<hr/i.test(t)) return "\n\n---\n\n";
@@ -586,7 +627,6 @@ export async function translateStory(
             .replace(/\n{3,}/g, "\n\n")
             .trim();
 
-          // Only append if not already present
           if (footerBlock && !md.includes(footerBlock.slice(0, 40))) {
             md = md.trimEnd() + "\n\n---\n\n" + footerBlock + "\n";
             consola.debug(
@@ -595,10 +635,9 @@ export async function translateStory(
           }
         }
       } catch {
-        // Silent if footer extraction fails
+        // Silent if header/footer extraction fails
       }
     }
-
     if (md !== before) {
       await fs.writeFile(ctx.intermediateMarkdown, md, "utf8");
       consola.debug(
@@ -636,6 +675,8 @@ export async function translateStory(
   if (Object.keys(imageMap).length) {
     let md = await fs.readFile(ctx.intermediateMarkdown, "utf8");
     md = updateMarkdownImageReferences(md, imageMap);
+    // After image filename substitutions, re-strip any alt text just in case:
+    md = md.replace(/!\[[^\]]*?\]\(([^)]+)\)/g, "![]($1)");
     await fs.writeFile(ctx.intermediateMarkdown, md, "utf8");
     console.log(`Converted ${Object.keys(imageMap).length} images to webp`);
   } else {
