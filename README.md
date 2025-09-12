@@ -1,10 +1,10 @@
 # story-translate
 
-Translate downloaded, illustrated stories (HTML, Markdown, or EPUB) into another language using OpenRouter while preserving images.  
-The pipeline normalizes everything to Markdown (LLM-friendly), translates, and then outputs either Markdown (default) or epub2.  
+Translate downloaded, illustrated stories (HTML, Markdown, or EPUB) into another language using OpenRouter while preserving images.
+The pipeline normalizes everything to Markdown (LLM-friendly), translates, and then outputs either Markdown (default) or epub2.
 Optionally converts local images to WebP (quality 90) to reduce size.
 
-## Features (Per Spec)
+## Features
 
 - Input formats: `.html`, `.md`, `.epub`
 - Output formats: Markdown (default) or `epub2`
@@ -215,7 +215,7 @@ story-translate test/test.epub --to English --format markdown
 
 ## Publishing
 
-The project is set up for npm publication (GitHub Actions workflow triggers on tags `v*`).  
+The project is set up for npm publication (GitHub Actions workflow triggers on tags `v*`).
 Exports:
 - ESM entry: `dist/index.js`
 - Types: `dist/index.d.ts`

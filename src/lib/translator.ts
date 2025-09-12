@@ -496,10 +496,76 @@ export async function translateStory(
   {
     let md = await fs.readFile(ctx.intermediateMarkdown, "utf8");
     const before = md;
+
+    // Convert raw <img> tags to markdown image syntax
     md = convertHtmlImgToMarkdown(md);
+
+    // Strip lingering <figure> wrappers produced by pandoc around images:
+    // Pattern examples we want to reduce:
+    // <figure>
+    // ![alt](path)
+    // </figure>
+    md = md.replace(
+      /<figure>\s*!\[[^\]]*?\]\([^\)]+?\)\s*<\/figure>/g,
+      (block) => {
+        return block.replace(/<\/?figure>/g, "").trim();
+      },
+    );
+
+    // Also handle cases where <figure><img ... /></figure> was directly converted to nested markdown:
+    // (should already be handled by previous conversion, but we double-guard)
+    md = md.replace(/<figure>\s*(?:<img\b[^>]*?>)\s*<\/figure>/gi, (frag) => {
+      const imgTag = frag.match(/<img\b[^>]*?>/i);
+      return imgTag ? convertHtmlImgToMarkdown(imgTag[0]) : frag;
+    });
+
+    // Attempt to capture footer content if input was HTML and it is missing from the markdown.
+    // We look for typical footer containers: <footer>, elements with class/footer id.
+    if (ctx.inputFormat === "html") {
+      try {
+        const originalHtml = await fs.readFile(absInput, "utf8");
+        const footerMatch =
+          originalHtml.match(/<footer[\s\S]*?<\/footer>/i) ||
+          originalHtml.match(
+            /<div[^>]+class=["'][^"']*footer[^"']*["'][\s\S]*?<\/div>/i,
+          ) ||
+          originalHtml.match(
+            /<section[^>]+class=["'][^"']*footer[^"']*["'][\s\S]*?<\/section>/i,
+          ) ||
+          originalHtml.match(/<div[^>]+id=["']footer["'][\s\S]*?<\/div>/i);
+        if (footerMatch) {
+          // Convert any images in footer to markdown too
+          let footerBlock = footerMatch[0];
+          footerBlock = convertHtmlImgToMarkdown(footerBlock);
+          // Very lightweight HTML tag strip for common block tags; leave inline emphasis.
+          footerBlock = footerBlock
+            .replace(/<\/?(div|section|footer|span|p|br|hr)[^>]*>/gi, (t) => {
+              if (/^<br/i.test(t)) return "\n";
+              if (/^<hr/i.test(t)) return "\n\n---\n\n";
+              return "\n";
+            })
+            .replace(/\n{3,}/g, "\n\n")
+            .trim();
+
+          // Only append if not already present
+          if (footerBlock && !md.includes(footerBlock.slice(0, 40))) {
+            md = md.trimEnd() + "\n\n---\n\n" + footerBlock + "\n";
+            consola.debug(
+              "Appended footer content extracted from original HTML.",
+            );
+          }
+        }
+      } catch {
+        // Silent if footer extraction fails
+      }
+    }
+
     if (md !== before) {
       await fs.writeFile(ctx.intermediateMarkdown, md, "utf8");
-      consola.debug("Converted HTML <img> tags to markdown syntax.");
+      consola.debug(
+        "normalize",
+        "Converted HTML <img> tags, stripped <figure> wrappers, and appended footer (if found).",
+      );
     }
   }
 
