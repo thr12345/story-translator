@@ -1,6 +1,6 @@
 {
   "name": "story-translator",
-  "version": "0.1.0",
+  "version": "1.0.1",
   "description": "Translate illustrated stories (html, markdown, epub) into target languages using OpenRouter, with image handling and Pandoc conversions.",
   "type": "module",
   "license": "MIT",
@@ -39,7 +39,8 @@
   },
   "dependencies": {
     "consola": "^3.2.3",
-    "yargs": "^17.7.2"
+    "yargs": "^17.7.2",
+    "sharp": "^0.33.2"
   },
   "devDependencies": {
     "@types/bun": "latest",

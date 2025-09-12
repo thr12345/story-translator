@@ -23,6 +23,7 @@ import { promises as fs } from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
 import consola from "consola";
+import { spawn } from "node:child_process";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -93,23 +94,55 @@ async function runCommand(
   cmd: string[],
   opts: { cwd?: string; allowFail?: boolean } = {},
 ): Promise<{ stdout: string; stderr: string; code: number }> {
-  const proc = Bun.spawn({
-    cmd,
-    cwd: opts.cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
-  const code = await proc.exited;
-
-  if (code !== 0 && !opts.allowFail) {
-    throw new Error(
-      `Command failed (${cmd.join(" ")}), exit=${code}\nstdout:\n${stdout}\nstderr:\n${stderr}`,
-    );
+  if (!cmd.length || !cmd[0]) {
+    throw new Error("runCommand: empty command array");
   }
-  return { stdout, stderr, code };
+  return await new Promise((resolve, reject) => {
+    const child = spawn(cmd[0]!, cmd.slice(1), {
+      cwd: opts.cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: false,
+    });
+
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+
+    child.stdout.on("data", (d: Buffer) => stdoutChunks.push(d));
+    child.stderr.on("data", (d: Buffer) => stderrChunks.push(d));
+
+    child.on("error", (err: Error) => {
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+      const stderr = Buffer.concat(stderrChunks).toString("utf8");
+      if (opts.allowFail) {
+        resolve({
+          stdout,
+          stderr: stderr + "\n" + (err.message || ""),
+          code: 1,
+        });
+      } else {
+        reject(
+          new Error(
+            `Command failed to start (${cmd.join(" ")}): ${err.message}`,
+          ),
+        );
+      }
+    });
+
+    child.on("close", (code: number | null) => {
+      const exitCode = code ?? 1;
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+      const stderr = Buffer.concat(stderrChunks).toString("utf8");
+      if (exitCode !== 0 && !opts.allowFail) {
+        reject(
+          new Error(
+            `Command failed (${cmd.join(" ")}), exit=${exitCode}\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+          ),
+        );
+      } else {
+        resolve({ stdout, stderr, code: exitCode });
+      }
+    });
+  });
 }
 
 async function checkToolExists(tool: string): Promise<boolean> {
@@ -141,9 +174,17 @@ async function convertImagesToWebp(
   dir: string,
   quality: number,
 ): Promise<ImageConversionResult> {
-  const hasCwebp = await checkToolExists("cwebp");
-  if (!hasCwebp) {
-    stageLog("images", "cwebp not found on PATH; skipping image conversion");
+  // Use sharp for in-process WebP conversion (no external cwebp dependency)
+  let sharpMod: typeof import("sharp") | null = null;
+  try {
+    // dynamic import to avoid forcing sharp in unsupported environments until needed
+    sharpMod = (await import("sharp"))
+      .default as unknown as typeof import("sharp");
+  } catch (e) {
+    stageLog(
+      "images",
+      `sharp not available (${(e as Error).message}); skipping image conversion`,
+    );
     return { converted: {}, skipped: [] };
   }
 
@@ -156,31 +197,29 @@ async function convertImagesToWebp(
       const full = path.join(current, e.name);
       if (e.isDirectory()) {
         await walk(full);
-      } else {
-        const ext = path.extname(e.name).toLowerCase();
-        if (IMAGE_EXTS.includes(ext)) {
-          const base = e.name.slice(0, -ext.length);
-          // Ensure unique dest if already .webp exists
-          const dest = path.join(current, `${base}.webp`);
-          try {
-            await runCommand([
-              "cwebp",
-              "-quiet",
-              "-q",
-              String(quality),
-              full,
-              "-o",
-              dest,
-            ]);
-            converted[path.relative(dir, full)] = path.relative(dir, dest);
-          } catch (err) {
-            skipped.push(full);
-            stageLog(
-              "images",
-              `Failed to convert ${full}: ${(err as Error).message}`,
-            );
-          }
-        }
+        continue;
+      }
+      const ext = path.extname(e.name).toLowerCase();
+      if (!IMAGE_EXTS.includes(ext)) continue;
+
+      const base = e.name.slice(0, -ext.length);
+      const dest = path.join(current, `${base}.webp`);
+
+      // Skip if already exists
+      if (await fileExists(dest)) {
+        converted[path.relative(dir, full)] = path.relative(dir, dest);
+        continue;
+      }
+
+      try {
+        await sharpMod!(full).webp({ quality }).toFile(dest);
+        converted[path.relative(dir, full)] = path.relative(dir, dest);
+      } catch (err) {
+        skipped.push(full);
+        stageLog(
+          "images",
+          `Failed to convert ${full} with sharp: ${(err as Error).message}`,
+        );
       }
     }
   }
