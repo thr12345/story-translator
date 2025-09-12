@@ -2,7 +2,7 @@
   "lockfileVersion": 1,
   "workspaces": {
     "": {
-      "name": "story-translate",
+      "name": "story-translator",
       "devDependencies": {
         "@types/bun": "latest",
       },

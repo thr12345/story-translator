@@ -1,4 +1,4 @@
-# story-translate
+# Story translator
 
 Translate downloaded, illustrated stories (HTML, Markdown, or EPUB) into another language using OpenRouter while preserving images.
 The pipeline normalizes everything to Markdown (LLM-friendly), translates, and then outputs either Markdown (default) or epub2.
@@ -14,7 +14,7 @@ Optionally converts local images to WebP (quality 90) to reduce size.
 - OpenRouter key discovery order:
   1. Direct CLI or library option
   2. Environment variable `OPENROUTER_API_KEY`
-  3. Stored config `~/.config/story-translate.json`
+  3. Stored config `~/.config/story-translator.json`
   4. Interactive prompt (persisted for future runs)
 - Automatic cover image:
   - If input EPUB: extracted cover (e.g. `cover-image.*`)
@@ -31,9 +31,9 @@ Optionally converts local images to WebP (quality 90) to reduce size.
 ## Installation
 
 ```/dev/null/shell.sh#L1-3
-bun install story-translate
+bun install story-translator
 # or with npm
-# npm install story-translate
+# npm install story-translator
 ```
 
 (If using directly from this repo:)
@@ -45,19 +45,19 @@ bun run build
 ## CLI Usage
 
 ```/dev/null/shell.sh#L1-12
-story-translate <inputFile> --to <TargetLanguage> [options]
+story-translator <inputFile> --to <TargetLanguage> [options]
 
 # Basic markdown to English
-story-translate ./test/test.md --to English
+story-translator ./test/test.md --to English
 
 # HTML to Spanish, keep intermediates for inspection
-story-translate ./test/test.html --to Spanish --keep-intermediate
+story-translator ./test/test.html --to Spanish --keep-intermediate
 
 # EPUB to English epub output
-story-translate ./test/test.epub --to English --format epub
+story-translator ./test/test.epub --to English --format epub
 
 # Disable image conversion
-story-translate ./test/test.md --to English --no-image-conversion
+story-translator ./test/test.md --to English --no-image-conversion
 ```
 
 ### CLI Options
@@ -87,7 +87,7 @@ story-translate ./test/test.md --to English --no-image-conversion
 ## Library Usage (TypeScript)
 
 ```/dev/null/translate.ts#L1-40
-import { translateStory } from 'story-translate';
+import { translateStory } from 'story-translator';
 
 async function run() {
   const result = await translateStory({
@@ -117,7 +117,7 @@ run().catch(err => {
 ### Quick Helper
 
 ```/dev/null/simple.ts#L1-12
-import { translate } from 'story-translate';
+import { translate } from 'story-translator';
 
 await translate('./chapter.html', 'English', {
   outputFormat: 'epub',
@@ -163,7 +163,7 @@ type TranslateOptions = {
 
 1. Provided directly (`--apiKey` or `apiKey` option)
 2. Env var `OPENROUTER_API_KEY`
-3. Stored config JSON: `~/.config/story-translate.json`
+3. Stored config JSON: `~/.config/story-translator.json`
 4. Interactive masked prompt (then persists to config)
 
 Stored file format:
@@ -208,9 +208,9 @@ Example inputs provided (see `test/`):
 Try:
 
 ```/dev/null/tests.sh#L1-5
-story-translate test/test.md --to English
-story-translate test/test.html --to English --format epub
-story-translate test/test.epub --to English --format markdown
+story-translator test/test.md --to English
+story-translator test/test.html --to English --format epub
+story-translator test/test.epub --to English --format markdown
 ```
 
 ## Publishing
@@ -219,7 +219,7 @@ The project is set up for npm publication (GitHub Actions workflow triggers on t
 Exports:
 - ESM entry: `dist/index.js`
 - Types: `dist/index.d.ts`
-- CLI binary: `story-translate`
+- CLI binary: `story-translator`
 
 ## Troubleshooting
 

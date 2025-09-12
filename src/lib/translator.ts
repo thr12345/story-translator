@@ -1,5 +1,5 @@
 /**
- * Core translation library for story-translate.
+ * Core translation library for story-translator.
  *
  * Responsibilities (per SPEC):
  * 1. Accept input in html / markdown / epub.
@@ -65,7 +65,7 @@ const DEFAULT_IMAGE_QUALITY = 90;
 const CONFIG_FILE = path.join(
   process.env.XDG_CONFIG_HOME ||
     path.join(process.env.HOME || process.cwd(), ".config"),
-  "story-translate.json",
+  "story-translator.json",
 );
 
 const IMAGE_EXTS = [".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"];
@@ -126,7 +126,7 @@ async function checkToolExists(tool: string): Promise<boolean> {
 
 function makeTempWorkDir(base: string, inputPath: string): string {
   const hash = Math.random().toString(36).slice(2, 10);
-  const dirName = `.story-translate-tmp-${hash}`;
+  const dirName = `.story-translator-tmp-${hash}`;
   return path.join(base, dirName);
 }
 

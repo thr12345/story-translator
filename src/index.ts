@@ -1,5 +1,5 @@
 /**
- * Barrel exports for story-translate library.
+ * Barrel exports for story-translator library.
  *
  * Public API surface:
  *  - translateStory(options)
@@ -20,19 +20,19 @@ export {
   detectInputFormat,
   getOpenRouterApiKey,
   type TranslateOptions,
-  type TranslateResult
-} from './lib/translator.js';
+  type TranslateResult,
+} from "./lib/translator.js";
 
 import {
   translateStory,
   translate,
   detectInputFormat,
-  getOpenRouterApiKey
-} from './lib/translator.js';
+  getOpenRouterApiKey,
+} from "./lib/translator.js";
 
 export default {
   translateStory,
   translate,
   detectInputFormat,
-  getOpenRouterApiKey
+  getOpenRouterApiKey,
 };

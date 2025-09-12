@@ -18,7 +18,7 @@ This is meant to be a relatively simple app for a narrow set of cases. Don't com
 5. Gets an OpenRouter API key:
   1. If run via library it will get it via an argument
   2. If via cli, it will check for an env variable
-  3, If no env variable, it will check for a stored key in ~/.config/story-translate.json. If not there, it will interactivly prompt the user for a key via Consola and store the key for future runs.
+  3, If no env variable, it will check for a stored key in ~/.config/story-translator.json. If not there, it will interactivly prompt the user for a key via Consola and store the key for future runs.
 6. Feeds the Markdown into the LLM using the prompts in convert_epub.py and get translated results
 7. Converts the final translated story to either Markdown or epub (default Markdown)
   - Pandoc is sensitive to relative input folder when it comes to preseving images so make sure to run it in the

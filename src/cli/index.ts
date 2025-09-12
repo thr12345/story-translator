@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * CLI entrypoint for story-translate
+ * CLI entrypoint for story-translator
  *
  * Spec responsibilities:
  *  - Accept input file (html|md|epub)
@@ -10,9 +10,9 @@
  *  - Persist API key (handled in library)
  *
  * Usage examples:
- *  story-translate ./test/test.md --to English
- *  story-translate ./test/test.html --to English --format epub
- *  story-translate ./test/test.epub --to English --keep-intermediate
+ *  story-translator ./test/test.md --to English
+ *  story-translator ./test/test.html --to English --format epub
+ *  story-translator ./test/test.epub --to English --keep-intermediate
  *
  * Exit codes:
  *  0 success
@@ -51,7 +51,7 @@ interface CliArgs {
 
 function buildCli() {
   return yargs(hideBin(process.argv))
-    .scriptName("story-translate")
+    .scriptName("story-translator")
     .command(
       "$0 <input>",
       "Translate a story file",

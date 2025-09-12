@@ -1,5 +1,5 @@
 {
-  "name": "story-translate",
+  "name": "story-translator",
   "version": "0.1.0",
   "description": "Translate illustrated stories (html, markdown, epub) into target languages using OpenRouter, with image handling and Pandoc conversions.",
   "type": "module",
@@ -13,7 +13,7 @@
   },
   "homepage": "https://github.com/thr12345/story-translator#readme",
   "bin": {
-    "story-translate": "dist/cli.js"
+    "story-translator": "dist/cli.js"
   },
   "main": "dist/index.js",
   "module": "dist/index.js",
