@@ -1,12 +1,56 @@
 {
   "name": "story-translate",
-  "module": "index.ts",
+  "version": "0.1.0",
+  "description": "Translate illustrated stories (html, markdown, epub) into target languages using OpenRouter, with image handling and Pandoc conversions.",
   "type": "module",
-  "private": true,
-  "devDependencies": {
-    "@types/bun": "latest"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thr12345/story-translator.git"
   },
-  "peerDependencies": {
-    "typescript": "^5"
+  "bugs": {
+    "url": "https://github.com/thr12345/story-translator/issues"
+  },
+  "homepage": "https://github.com/thr12345/story-translator#readme",
+  "bin": {
+    "story-translate": "dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "start": "bun run src/cli/index.ts",
+    "dev": "bun run src/cli/index.ts",
+    "build:lib": "bunx tsc --emitDeclarationOnly --declaration --outDir dist && bun build ./src/index.ts --target bun --outfile dist/index.js",
+    "build:cli": "bun build ./src/cli/index.ts --target bun --outfile dist/cli.js",
+    "build": "rm -rf dist && bun run build:lib && bun run build:cli",
+    "prepare": "bun run build",
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "dependencies": {
+    "consola": "^3.2.3",
+    "yargs": "^17.7.2"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/yargs": "^17.0.32",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=18",
+    "bun": ">=1.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

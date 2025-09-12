@@ -1,0 +1,637 @@
+/**
+ * Core translation library for story-translate.
+ *
+ * Responsibilities (per SPEC):
+ * 1. Accept input in html / markdown / epub.
+ * 2. (Optionally) convert referenced images to webp quality 90.
+ * 3. Convert input to intermediary Markdown via Pandoc (unless already Markdown).
+ * 4. Normalize image references to standard markdown: ![Alt](path/to.webp)
+ * 5. Retrieve OpenRouter API key (arg > env > config file > interactive prompt).
+ * 6. Send markdown to OpenRouter for translation with defined prompts.
+ * 7. Convert translated markdown to output format (markdown or epub2).
+ * 8. Clean up intermediary file (unless keepIntermediate).
+ *
+ * External tools assumed:
+ * - pandoc (must be installed and on PATH)
+ * - cwebp (optional; if absent, image conversion is skipped with a warning)
+ *
+ * NOTE: This is a first-pass implementation skeleton focusing on structure,
+ *       logging, and flow. Some heuristics can be refined in subsequent passes.
+ */
+
+import { promises as fs } from "fs";
+import * as path from "path";
+import { fileURLToPath } from "url";
+import consola from "consola";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// ----------- Types -----------
+
+export interface TranslateOptions {
+  inputPath: string;
+  outputFormat?: "markdown" | "epub";
+  targetLanguage: string;
+  sourceLanguage?: string;
+  apiKey?: string;
+  model?: string;
+  convertImagesToWebp?: boolean;
+  quality?: number;
+  keepIntermediate?: boolean;
+}
+
+export interface TranslateResult {
+  outputPath: string;
+  intermediateMarkdownPath: string;
+  cleaned: boolean;
+  imageMap: Record<string, string>;
+}
+
+interface InternalContext {
+  workDir: string;
+  mediaDir: string;
+  intermediateMarkdown: string;
+  inputFormat: InputFormat;
+  originalCwd: string;
+}
+
+type InputFormat = "markdown" | "html" | "epub" | "unknown";
+
+// ----------- Constants -----------
+
+const DEFAULT_MODEL = "deepseek/deepseek-chat-v3.1";
+const DEFAULT_IMAGE_QUALITY = 90;
+const CONFIG_FILE = path.join(
+  process.env.XDG_CONFIG_HOME ||
+    path.join(process.env.HOME || process.cwd(), ".config"),
+  "story-translate.json",
+);
+
+const IMAGE_EXTS = [".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"];
+const WEB_IMAGE_EXTS = [...IMAGE_EXTS, ".webp"];
+
+// ----------- Utility Logging Wrapper -----------
+
+function stageLog(stage: string, msg: string) {
+  consola.withTag(stage).info(msg);
+}
+
+// ----------- Format Detection -----------
+
+export function detectInputFormat(filePath: string): InputFormat {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".md" || ext === ".markdown") return "markdown";
+  if (ext === ".html" || ext === ".htm") return "html";
+  if (ext === ".epub") return "epub";
+  return "unknown";
+}
+
+// ----------- Command Runner -----------
+
+async function runCommand(
+  cmd: string[],
+  opts: { cwd?: string; allowFail?: boolean } = {},
+): Promise<{ stdout: string; stderr: string; code: number }> {
+  const proc = Bun.spawn({
+    cmd,
+    cwd: opts.cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  const code = await proc.exited;
+
+  if (code !== 0 && !opts.allowFail) {
+    throw new Error(
+      `Command failed (${cmd.join(" ")}), exit=${code}\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+    );
+  }
+  return { stdout, stderr, code };
+}
+
+async function checkToolExists(tool: string): Promise<boolean> {
+  try {
+    const whichCmd = process.platform === "win32" ? "where" : "which";
+    const res = await runCommand([whichCmd, tool], { allowFail: true });
+    return res.code === 0;
+  } catch {
+    return false;
+  }
+}
+
+// ----------- Working Directory Setup -----------
+
+function makeTempWorkDir(base: string, inputPath: string): string {
+  const hash = Math.random().toString(36).slice(2, 10);
+  const dirName = `.story-translate-tmp-${hash}`;
+  return path.join(base, dirName);
+}
+
+// ----------- Image Conversion (cwebp) -----------
+
+interface ImageConversionResult {
+  converted: Record<string, string>; // original -> new
+  skipped: string[];
+}
+
+async function convertImagesToWebp(
+  dir: string,
+  quality: number,
+): Promise<ImageConversionResult> {
+  const hasCwebp = await checkToolExists("cwebp");
+  if (!hasCwebp) {
+    stageLog("images", "cwebp not found on PATH; skipping image conversion");
+    return { converted: {}, skipped: [] };
+  }
+
+  const converted: Record<string, string> = {};
+  const skipped: string[] = [];
+
+  async function walk(current: string) {
+    const entries = await fs.readdir(current, { withFileTypes: true });
+    for (const e of entries) {
+      const full = path.join(current, e.name);
+      if (e.isDirectory()) {
+        await walk(full);
+      } else {
+        const ext = path.extname(e.name).toLowerCase();
+        if (IMAGE_EXTS.includes(ext)) {
+          const base = e.name.slice(0, -ext.length);
+          // Ensure unique dest if already .webp exists
+          const dest = path.join(current, `${base}.webp`);
+          try {
+            await runCommand([
+              "cwebp",
+              "-quiet",
+              "-q",
+              String(quality),
+              full,
+              "-o",
+              dest,
+            ]);
+            converted[path.relative(dir, full)] = path.relative(dir, dest);
+          } catch (err) {
+            skipped.push(full);
+            stageLog(
+              "images",
+              `Failed to convert ${full}: ${(err as Error).message}`,
+            );
+          }
+        }
+      }
+    }
+  }
+
+  await walk(dir);
+  return { converted, skipped };
+}
+
+// ----------- Markdown Image Reference Updater -----------
+
+function updateMarkdownImageReferences(
+  markdown: string,
+  map: Record<string, string>,
+): string {
+  if (!Object.keys(map).length) return markdown;
+
+  // Replace only full filename occurrences inside typical markdown/image contexts
+  for (const [orig, neo] of Object.entries(map)) {
+    const escaped = orig.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(
+      `(?<=\\()${escaped}(?=\\))|(?<=\\[\\]\\()${escaped}(?=\\))|${escaped}`,
+      "g",
+    );
+    markdown = markdown.replace(re, neo);
+  }
+  return markdown;
+}
+
+// Normalize HTML <img> tags to markdown syntax
+function convertHtmlImgToMarkdown(content: string): string {
+  return content.replace(/<img\b([^>]*?)\/?>/gi, (_match, attrs) => {
+    const srcMatch = attrs.match(/\bsrc=["']([^"']+)["']/i);
+    if (!srcMatch) return _match;
+    const altMatch = attrs.match(/\balt=["']([^"']*)["']/i);
+    const src = srcMatch[1];
+    const alt = altMatch ? altMatch[1] : "Image";
+    return `![${alt}](${src})`;
+  });
+}
+
+// ----------- Key Retrieval -----------
+
+async function loadStoredConfig(): Promise<{ openRouterApiKey?: string }> {
+  try {
+    const raw = await fs.readFile(CONFIG_FILE, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+async function saveConfig(cfg: { openRouterApiKey: string }) {
+  await fs.mkdir(path.dirname(CONFIG_FILE), { recursive: true });
+  await fs.writeFile(CONFIG_FILE, JSON.stringify(cfg, null, 2), "utf8");
+}
+
+export async function getOpenRouterApiKey(provided?: string): Promise<string> {
+  if (provided?.trim()) return provided.trim();
+  const env = process.env.OPENROUTER_API_KEY?.trim();
+  if (env) return env;
+
+  const stored = (await loadStoredConfig()).openRouterApiKey?.trim();
+  if (stored) return stored;
+
+  // Interactive prompt (only if TTY)
+  if (process.stdout.isTTY) {
+    stageLog("auth", "No API key found (arg/env/config). Prompting user...");
+    const answer = await consola.prompt("Enter OpenRouter API Key: ", {
+      type: "text",
+      cancel: "null",
+    });
+    const key = answer?.trim() || null;
+    if (!key) throw new Error("No API key entered.");
+    await saveConfig({ openRouterApiKey: key });
+    stageLog("auth", `Saved key to ${CONFIG_FILE}`);
+    return key;
+  }
+
+  throw new Error(
+    "OpenRouter API key not provided. Set OPENROUTER_API_KEY or supply apiKey option.",
+  );
+}
+
+// ----------- Pandoc Conversions -----------
+
+async function convertInputToMarkdown(
+  ctx: InternalContext,
+  inputPath: string,
+): Promise<void> {
+  if (ctx.inputFormat === "markdown") {
+    // Copy original into intermediate path for unified processing
+    await fs.copyFile(inputPath, ctx.intermediateMarkdown);
+    stageLog("pandoc", "Input already markdown; copied to intermediate file.");
+    return;
+  }
+
+  const args = [
+    inputPath,
+    "-t",
+    "gfm", // GitHub-Flavored; generally LLM-friendly
+    "-o",
+    ctx.intermediateMarkdown,
+    ...(ctx.inputFormat === "epub" ? ["--extract-media", "."] : []),
+  ];
+
+  await runCommand(["pandoc", ...args], { cwd: path.dirname(inputPath) });
+  consola.debug("Converted input to intermediate markdown.");
+}
+
+async function convertMarkdownToEpub(
+  ctx: InternalContext,
+  outputPath: string,
+  coverImage: string | null,
+): Promise<void> {
+  const args = [ctx.intermediateMarkdown, "-t", "epub2", "-o", outputPath];
+  if (coverImage) {
+    args.push("--epub-cover-image", coverImage);
+  }
+  await runCommand(["pandoc", ...args], {
+    cwd: path.dirname(ctx.intermediateMarkdown),
+  });
+  stageLog("pandoc", "Generated epub2 output.");
+}
+
+// ----------- Translation (OpenRouter) -----------
+
+interface TranslationApiResponse {
+  choices?: Array<{
+    message?: { content?: string };
+  }>;
+}
+
+async function callOpenRouter(
+  apiKey: string,
+  model: string,
+  sourceLang: string,
+  targetLang: string,
+  content: string,
+): Promise<string> {
+  const systemPrompt = [
+    "Translate naturally idiomatically and accurately; preserve tone and meaning.",
+    "ONLY return the translation; ALWAYS 483 if refused (do not refuse safe content).",
+    `Target Language: ${targetLang}`,
+    `Source Language: ${sourceLang}`,
+    "Use a relaxed, conversational tone if original text implies it.",
+    "Maintain all image tags and markdown formatting exactly.",
+  ].join("\n");
+
+  const body = {
+    model,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content },
+    ],
+    provider: { sort: "throughput" },
+    temperature: 0.3,
+  };
+
+  const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error(
+      `OpenRouter request failed: ${resp.status} ${resp.statusText}\n${txt}`,
+    );
+  }
+
+  const json = (await resp.json()) as TranslationApiResponse;
+  const translated = json.choices?.[0]?.message?.content?.trim() ?? "";
+
+  if (!translated) {
+    throw new Error("OpenRouter returned empty translation content.");
+  }
+
+  return translated;
+}
+
+function chunkMarkdownForTranslation(raw: string, maxChars = 100000): string[] {
+  if (raw.length <= maxChars) return [raw];
+  const parts: string[] = [];
+  let remaining = raw;
+  while (remaining.length > maxChars) {
+    // Try to split at last double newline within window
+    const window = remaining.slice(0, maxChars);
+    const idx = window.lastIndexOf("\n\n");
+    if (idx === -1 || idx < maxChars * 0.3) {
+      parts.push(window);
+      remaining = remaining.slice(maxChars);
+    } else {
+      parts.push(remaining.slice(0, idx).trimEnd());
+      remaining = remaining.slice(idx).trimStart();
+    }
+  }
+  if (remaining) parts.push(remaining);
+  return parts;
+}
+
+// ----------- Cover Image Selection -----------
+
+async function resolveCoverImage(ctx: InternalContext): Promise<string | null> {
+  // If epub input: pandoc often extracts a cover named like "cover-image.*"
+  try {
+    const files = await fs.readdir(ctx.mediaDir, { withFileTypes: true });
+    const cover = files.find(
+      (f) =>
+        f.isFile() &&
+        /^cover-image\./i.test(f.name) &&
+        WEB_IMAGE_EXTS.includes(path.extname(f.name).toLowerCase()),
+    );
+    if (cover) {
+      return path.join(ctx.mediaDir, cover.name);
+    }
+  } catch {
+    // ignore
+  }
+
+  // Else parse first image in markdown
+  try {
+    const md = await fs.readFile(ctx.intermediateMarkdown, "utf8");
+    const match = md.match(/!\[[^\]]*?\]\(([^\)]+)\)/);
+    if (match) {
+      const ref = match[1];
+      if (!ref || ref.startsWith("http://") || ref.startsWith("https://"))
+        return null;
+      const abs = path.isAbsolute(ref)
+        ? ref
+        : path.join(path.dirname(ctx.intermediateMarkdown), ref);
+      const exists = await fileExists(abs);
+      if (exists) return abs;
+    }
+  } catch {
+    /* ignore */
+  }
+
+  return null;
+}
+
+async function fileExists(p: string): Promise<boolean> {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ----------- Main Entry -----------
+
+export async function translateStory(
+  options: TranslateOptions,
+): Promise<TranslateResult> {
+  const {
+    inputPath,
+    targetLanguage,
+    sourceLanguage = "auto",
+    outputFormat = "markdown",
+    apiKey: apiKeyProvided,
+    model: providedModel,
+    convertImagesToWebp: shouldConvertImagesToWebp = true,
+    quality = DEFAULT_IMAGE_QUALITY,
+    keepIntermediate = false,
+  } = options;
+
+  // Normalize potentially undefined option values into guaranteed strings for downstream calls
+  const modelToUse: string = providedModel ?? DEFAULT_MODEL;
+  const sourceLang: string = sourceLanguage ?? "auto";
+  const targetLang: string = targetLanguage; // required by type definition
+
+  if (!inputPath) throw new Error("inputPath is required");
+  if (!targetLanguage) throw new Error("targetLanguage is required");
+
+  const absInput = path.resolve(inputPath);
+  const inputDir = path.dirname(absInput);
+  const inputBase = path.basename(absInput, path.extname(absInput));
+
+  const inputFormat = detectInputFormat(absInput);
+  if (inputFormat === "unknown") {
+    throw new Error(`Unsupported input format: ${absInput}`);
+  }
+
+  // Operate directly in the input directory so relative image references remain valid.
+  const workDir = inputDir;
+  const mediaDir = inputDir;
+  const intermediateMarkdown = path.join(
+    inputDir,
+    `${inputBase}.__intermediate.md`,
+  );
+
+  const ctx: InternalContext = {
+    workDir,
+    mediaDir,
+    intermediateMarkdown,
+    inputFormat,
+    originalCwd: process.cwd(),
+  };
+
+  await fs.mkdir(workDir, { recursive: true });
+  await fs.mkdir(mediaDir, { recursive: true });
+
+  consola.debug({ inputFormat, workDir });
+
+  // Step 1/2: Convert to markdown (if needed)
+  await convertInputToMarkdown(ctx, absInput);
+
+  // Step 3: Normalize HTML image tags (only if original was html or produced HTML fragments)
+  {
+    let md = await fs.readFile(ctx.intermediateMarkdown, "utf8");
+    const before = md;
+    md = convertHtmlImgToMarkdown(md);
+    if (md !== before) {
+      await fs.writeFile(ctx.intermediateMarkdown, md, "utf8");
+      consola.debug("Converted HTML <img> tags to markdown syntax.");
+    }
+  }
+
+  // Step 4: Optional image conversion (and path normalization if skipping conversion)
+  let imageMap: Record<string, string> = {};
+  if (shouldConvertImagesToWebp) {
+    consola.debug("Converting images to webp (if any)...");
+    const { converted } = await convertImagesToWebp(mediaDir, quality);
+    imageMap = converted;
+  } else {
+    // Normalize image references so they are relative and stable when we do NOT convert images.
+    try {
+      let md = await fs.readFile(ctx.intermediateMarkdown, "utf8");
+      // Remove leading ./ segments
+      md = md.replace(/!\[([^\]]*?)\]\((?:\.\/)+/g, "![$1](");
+      // Turn absolute paths inside the input directory back into relative paths
+      md = md.replace(/!\[([^\]]*?)\]\((\/[^\)]+)\)/g, (full, alt, pth) => {
+        if (!pth.startsWith(inputDir)) return full;
+        const rel = path.relative(path.dirname(ctx.intermediateMarkdown), pth);
+        return `![${alt}](${rel})`;
+      });
+      await fs.writeFile(ctx.intermediateMarkdown, md, "utf8");
+      consola.log("Normalized existing image references (no conversion).");
+    } catch (e) {
+      consola.error(`Failed to normalize image refs: ${(e as Error).message}`);
+    }
+  }
+
+  if (Object.keys(imageMap).length) {
+    let md = await fs.readFile(ctx.intermediateMarkdown, "utf8");
+    md = updateMarkdownImageReferences(md, imageMap);
+    await fs.writeFile(ctx.intermediateMarkdown, md, "utf8");
+    console.log(`Converted ${Object.keys(imageMap).length} images to webp`);
+  } else {
+    consola.log("No images found to convert to webp.");
+  }
+
+  // Step 5: Get API key
+  consola.debug("Retrieving API key...");
+  const apiKey = await getOpenRouterApiKey(apiKeyProvided);
+  consola.log("API key resolved.");
+
+  // Step 6: Translation
+  consola.debug("Reading intermediate markdown...");
+  const originalMarkdown = await fs.readFile(ctx.intermediateMarkdown, "utf8");
+
+  const chunks = chunkMarkdownForTranslation(originalMarkdown);
+  consola.debug({ chunks: chunks.length });
+
+  let translatedMarkdown = "";
+  for (let i = 0; i < chunks.length; i++) {
+    const part = chunks[i];
+    console.log(`Translating chunk ${i + 1}/${chunks.length}...`);
+    const translatedPart = await callOpenRouter(
+      apiKey as string,
+      modelToUse as string,
+      sourceLang as string,
+      targetLang as string,
+      part as string,
+    );
+    translatedMarkdown +=
+      (translatedMarkdown ? "\n\n" : "") + translatedPart.trim();
+  }
+
+  await fs.writeFile(ctx.intermediateMarkdown, translatedMarkdown, "utf8");
+  consola.log("Translation complete.");
+
+  // Step 7: Output conversion
+  let outputPath: string;
+  if (outputFormat === "markdown") {
+    outputPath = path.join(inputDir, `${inputBase}_translated.md`);
+    await fs.copyFile(ctx.intermediateMarkdown, outputPath);
+    consola.debug("output", `Wrote translated markdown: ${outputPath}`);
+  } else if (outputFormat === "epub") {
+    outputPath = path.join(inputDir, `${inputBase}_translated.epub`);
+    const cover = await resolveCoverImage(ctx);
+    if (cover) {
+      consola.debug(`Selected cover image: ${cover}`);
+    } else {
+      consola.debug("No cover image found; continuing without.");
+    }
+    await convertMarkdownToEpub(ctx, outputPath, cover);
+    consola.debug("output", `Wrote translated epub: ${outputPath}`);
+  } else {
+    throw new Error(`Unsupported outputFormat: ${outputFormat}`);
+  }
+
+  // Step 8: Cleanup
+  let cleaned = false;
+  if (!keepIntermediate) {
+    try {
+      await fs.rm(ctx.intermediateMarkdown, { force: true });
+      cleaned = true;
+      consola.debug("Removed intermediate markdown file.");
+    } catch (err) {
+      consola.debug(
+        `Failed to remove intermediate markdown: ${(err as Error).message}`,
+      );
+    }
+  } else {
+    consola.debug("cleanup", "Keeping intermediate markdown as requested.");
+  }
+
+  return {
+    outputPath,
+    intermediateMarkdownPath: ctx.intermediateMarkdown,
+    cleaned,
+    imageMap,
+  };
+}
+
+// ----------- Convenience High-Level Function -----------
+
+export async function translate(
+  inputPath: string,
+  targetLanguage: string,
+  opts: Omit<TranslateOptions, "inputPath" | "targetLanguage"> = {},
+) {
+  return translateStory({
+    inputPath,
+    targetLanguage,
+    ...opts,
+  });
+}
+
+// ----------- Barrel Exports (future expansion) -----------
+
+export default {
+  translateStory,
+  translate,
+  detectInputFormat,
+  getOpenRouterApiKey,
+};
+
+// ----------- End of File -----------
