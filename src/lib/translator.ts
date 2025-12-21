@@ -42,7 +42,7 @@ export interface TranslateOptions {
   convertImagesToWebp?: boolean;
   quality?: number;
   keepIntermediate?: boolean;
-  autoNameFromTitle?: boolean;
+  autoName?: boolean;
 }
 
 export interface TranslateResult {
@@ -279,7 +279,10 @@ function extractTitleForFilename(markdown: string): string | null {
     // Found a non-image line - clean it up for filename use
     let filename = trimmed;
 
-    // Remove markdown heading markers
+    // Remove HTML tags (e.g., <h1>, <h2>, etc.) that may be present
+    filename = filename.replace(/<[^>]+>/g, "");
+
+    // Remove markdown heading markers (must be done after HTML tag removal)
     filename = filename.replace(/^#+\s*/, "");
 
     // Remove markdown formatting (bold, italic, links, etc.)
@@ -543,7 +546,7 @@ export async function translateStory(
     convertImagesToWebp: shouldConvertImagesToWebp = true,
     quality = DEFAULT_IMAGE_QUALITY,
     keepIntermediate = false,
-    autoNameFromTitle = false,
+    autoName = false,
   } = options;
 
   // Normalize potentially undefined option values into guaranteed strings for downstream calls
@@ -774,7 +777,7 @@ export async function translateStory(
 
   // Determine output filename
   let outputBase = `${inputBase}_translated`;
-  if (autoNameFromTitle) {
+  if (autoName) {
     const titleName = extractTitleForFilename(translatedMarkdown);
     if (titleName) {
       outputBase = titleName;

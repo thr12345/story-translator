@@ -103,7 +103,7 @@ async function run() {
     // apiKey: 'sk-or-...',       // optional override
     // sourceLanguage: 'Japanese',
     keepIntermediate: false,
-    autoNameFromTitle: false,    // set to true to name output from title
+    autoName: false,    // set to true to name output from title
     onProgress: (stage, details) => {
       console.log(`[${stage}]`, details);
     }
@@ -148,7 +148,7 @@ type TranslateOptions = {
   convertImagesToWebp?: boolean;
   quality?: number;
   keepIntermediate?: boolean;
-  autoNameFromTitle?: boolean;
+  autoName?: boolean;
   workRoot?: string;
   onProgress?: (stage: string, details?: any) => void;
 }

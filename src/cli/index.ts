@@ -42,7 +42,7 @@ interface CliArgs {
   quality: number;
   noImageConversion: boolean;
   keepIntermediate: boolean;
-  autoNameFromTitle: boolean;
+  autoName: boolean;
   apiKey?: string;
   workRoot?: string;
   quiet: boolean;
@@ -187,7 +187,7 @@ async function main() {
     convertImagesToWebp: !argv.noImageConversion,
     quality: argv.quality,
     keepIntermediate: argv.keepIntermediate,
-    autoNameFromTitle: argv.autoNameFromTitle,
+    autoName: argv.autoName,
   };
 
   try {
