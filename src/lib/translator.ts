@@ -42,6 +42,7 @@ export interface TranslateOptions {
   convertImagesToWebp?: boolean;
   quality?: number;
   keepIntermediate?: boolean;
+  autoNameFromTitle?: boolean;
 }
 
 export interface TranslateResult {
@@ -258,6 +259,60 @@ function convertHtmlImgToMarkdown(content: string): string {
     const src = srcMatch[1];
     return `![](${src})`;
   });
+}
+
+/**
+ * Extract the first non-image line from markdown content and sanitize it for use as a filename.
+ * Returns null if no suitable line is found.
+ */
+function extractTitleForFilename(markdown: string): string | null {
+  const lines = markdown.split("\n");
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // Skip empty lines and image lines (markdown images start with !)
+    if (!trimmed || trimmed.startsWith("!")) {
+      continue;
+    }
+
+    // Found a non-image line - clean it up for filename use
+    let filename = trimmed;
+
+    // Remove markdown heading markers
+    filename = filename.replace(/^#+\s*/, "");
+
+    // Remove markdown formatting (bold, italic, links, etc.)
+    filename = filename.replace(/\*\*([^*]+)\*\*/g, "$1"); // bold
+    filename = filename.replace(/\*([^*]+)\*/g, "$1"); // italic
+    filename = filename.replace(/__([^_]+)__/g, "$1"); // bold
+    filename = filename.replace(/_([^_]+)_/g, "$1"); // italic
+    filename = filename.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1"); // links
+    filename = filename.replace(/`([^`]+)`/g, "$1"); // inline code
+
+    // Remove or replace invalid filename characters
+    // Replace common punctuation with spaces or remove them
+    filename = filename.replace(/[<>:"/\\|?*]/g, ""); // invalid chars for most filesystems
+    filename = filename.replace(/[,;.!]/g, ""); // punctuation
+
+    // Collapse multiple spaces and trim
+    filename = filename.replace(/\s+/g, " ").trim();
+
+    // Truncate if too long (leave room for extension)
+    const maxLength = 100;
+    if (filename.length > maxLength) {
+      filename = filename.substring(0, maxLength).trim();
+    }
+
+    // Return null if we ended up with nothing
+    if (!filename) {
+      continue;
+    }
+
+    return filename;
+  }
+
+  return null;
 }
 
 // ----------- Key Retrieval -----------
@@ -488,6 +543,7 @@ export async function translateStory(
     convertImagesToWebp: shouldConvertImagesToWebp = true,
     quality = DEFAULT_IMAGE_QUALITY,
     keepIntermediate = false,
+    autoNameFromTitle = false,
   } = options;
 
   // Normalize potentially undefined option values into guaranteed strings for downstream calls
@@ -715,12 +771,27 @@ export async function translateStory(
 
   // Step 7: Output conversion
   let outputPath: string;
+
+  // Determine output filename
+  let outputBase = `${inputBase}_translated`;
+  if (autoNameFromTitle) {
+    const titleName = extractTitleForFilename(translatedMarkdown);
+    if (titleName) {
+      outputBase = titleName;
+      consola.debug(`Auto-naming output from title: "${titleName}"`);
+    } else {
+      consola.debug(
+        "No suitable title found for auto-naming; using default name",
+      );
+    }
+  }
+
   if (outputFormat === "markdown") {
-    outputPath = path.join(inputDir, `${inputBase}_translated.md`);
+    outputPath = path.join(inputDir, `${outputBase}.md`);
     await fs.copyFile(ctx.intermediateMarkdown, outputPath);
     consola.debug("output", `Wrote translated markdown: ${outputPath}`);
   } else if (outputFormat === "epub") {
-    outputPath = path.join(inputDir, `${inputBase}_translated.epub`);
+    outputPath = path.join(inputDir, `${outputBase}.epub`);
     const cover = await resolveCoverImage(ctx);
     if (cover) {
       consola.debug(`Selected cover image: ${cover}`);

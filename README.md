@@ -58,6 +58,9 @@ story-translator ./test/test.epub --to English --format epub
 
 # Disable image conversion
 story-translator ./test/test.md --to English --no-image-conversion
+
+# Auto-name output file from the translated title
+story-translator ./test/test.md --to English --auto-name
 ```
 
 ### CLI Options
@@ -72,6 +75,7 @@ story-translator ./test/test.md --to English --no-image-conversion
 - `--quality <0-100>` WebP quality (default: 90)
 - `--no-image-conversion` Disable image conversion
 - `--keep-intermediate` Keep temp working directory & intermediate markdown
+- `--auto-name` Name output file from first non-image line (usually the title) (default: false)
 - `--work-root <dir>` Place temporary work folder under this directory
 - `--quiet` Suppress non-error logs
 - `--verbose` More detailed logs
@@ -99,6 +103,7 @@ async function run() {
     // apiKey: 'sk-or-...',       // optional override
     // sourceLanguage: 'Japanese',
     keepIntermediate: false,
+    autoNameFromTitle: false,    // set to true to name output from title
     onProgress: (stage, details) => {
       console.log(`[${stage}]`, details);
     }
@@ -143,6 +148,7 @@ type TranslateOptions = {
   convertImagesToWebp?: boolean;
   quality?: number;
   keepIntermediate?: boolean;
+  autoNameFromTitle?: boolean;
   workRoot?: string;
   onProgress?: (stage: string, details?: any) => void;
 }
@@ -191,10 +197,19 @@ Stored file format:
 
 ## Output File Naming
 
+By default:
 ```
 <originalBase>_translated.md
 <originalBase>_translated.epub
 ```
+
+With `--auto-name`:
+```
+<FirstNonImageLine>.md
+<FirstNonImageLine>.epub
+```
+
+The auto-naming feature extracts the first non-image line from the translated content (usually the title), removes markdown formatting, and sanitizes it for use as a filename. If no suitable line is found, it falls back to the default naming.
 
 Placed in the same directory as the input file.
 

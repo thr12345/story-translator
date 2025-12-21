@@ -42,6 +42,7 @@ interface CliArgs {
   quality: number;
   noImageConversion: boolean;
   keepIntermediate: boolean;
+  autoNameFromTitle: boolean;
   apiKey?: string;
   workRoot?: string;
   quiet: boolean;
@@ -106,6 +107,12 @@ function buildCli() {
             default: false,
             describe:
               "Keep intermediate markdown & temp working directory (for debugging)",
+          })
+          .option("auto-name", {
+            type: "boolean",
+            default: false,
+            describe:
+              "Automatically name the output file using the first non-image line (usually the title)",
           })
           .option("work-root", {
             type: "string",
@@ -180,6 +187,7 @@ async function main() {
     convertImagesToWebp: !argv.noImageConversion,
     quality: argv.quality,
     keepIntermediate: argv.keepIntermediate,
+    autoNameFromTitle: argv.autoNameFromTitle,
   };
 
   try {
