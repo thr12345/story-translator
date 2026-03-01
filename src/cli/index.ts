@@ -44,6 +44,8 @@ interface CliArgs {
   keepIntermediate: boolean;
   autoName: boolean;
   apiKey?: string;
+  baseUrl?: string;
+  timeout?: number;
   workRoot?: string;
   quiet: boolean;
   verbose: boolean;
@@ -84,7 +86,19 @@ function buildCli() {
             alias: "m",
             type: "string",
             default: "deepseek/deepseek-chat-v3.1",
-            describe: "OpenRouter model identifier",
+            describe: "LLM model identifier",
+          })
+          .option("baseUrl", {
+            alias: "u",
+            type: "string",
+            describe:
+              "LLM API base URL (defaults to https://openrouter.ai/api/v1)",
+          })
+          .option("timeout", {
+            alias: "T",
+            type: "number",
+            describe:
+              "Per-chunk request timeout in seconds (default: 300). Increase this for slow local models.",
           })
           .option("apiKey", {
             alias: "k",
@@ -184,6 +198,8 @@ async function main() {
     outputFormat: argv.format,
     model: argv.model,
     apiKey: argv.apiKey,
+    baseUrl: argv.baseUrl,
+    timeoutMs: argv.timeout !== undefined ? argv.timeout * 1000 : undefined,
     convertImagesToWebp: !argv.noImageConversion,
     quality: argv.quality,
     keepIntermediate: argv.keepIntermediate,

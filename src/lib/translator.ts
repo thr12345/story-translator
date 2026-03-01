@@ -39,6 +39,8 @@ export interface TranslateOptions {
   sourceLanguage?: string;
   apiKey?: string;
   model?: string;
+  baseUrl?: string;
+  timeoutMs?: number;
   convertImagesToWebp?: boolean;
   quality?: number;
   keepIntermediate?: boolean;
@@ -416,6 +418,8 @@ async function callOpenRouter(
   sourceLang: string,
   targetLang: string,
   content: string,
+  baseUrl: string = "https://openrouter.ai/api/v1",
+  timeoutMs: number = 5 * 60 * 1000,
 ): Promise<string> {
   const systemPrompt = [
     "Translate naturally idiomatically and accurately; preserve tone and meaning.",
@@ -436,19 +440,33 @@ async function callOpenRouter(
     temperature: 0.3,
   };
 
-  const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
+  let resp: Response;
+  try {
+    resp = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+      // @ts-ignore - bun workaround for timeout being stuck to 5 min: https://github.com/oven-sh/bun/issues/16682
+      timeout: false,
+    });
+  } catch (err) {
+    const name = (err as Error).name;
+    if (name === "AbortError" || name === "TimeoutError") {
+      throw new Error(
+        `LLM API request timed out after ${Math.round(timeoutMs / 1000)}s. Use --timeout to increase the limit.`,
+      );
+    }
+    throw err;
+  }
 
   if (!resp.ok) {
     const txt = await resp.text();
     throw new Error(
-      `OpenRouter request failed: ${resp.status} ${resp.statusText}\n${txt}`,
+      `LLM API request failed: ${resp.status} ${resp.statusText}\n${txt}`,
     );
   }
 
@@ -456,7 +474,7 @@ async function callOpenRouter(
   const translated = json.choices?.[0]?.message?.content?.trim() ?? "";
 
   if (!translated) {
-    throw new Error("OpenRouter returned empty translation content.");
+    throw new Error("LLM API returned empty translation content.");
   }
 
   return translated;
@@ -543,6 +561,8 @@ export async function translateStory(
     outputFormat = "markdown",
     apiKey: apiKeyProvided,
     model: providedModel,
+    baseUrl,
+    timeoutMs = 5 * 60 * 1000,
     convertImagesToWebp: shouldConvertImagesToWebp = true,
     quality = DEFAULT_IMAGE_QUALITY,
     keepIntermediate = false,
@@ -764,6 +784,8 @@ export async function translateStory(
       sourceLang as string,
       targetLang as string,
       part as string,
+      baseUrl,
+      timeoutMs,
     );
     translatedMarkdown +=
       (translatedMarkdown ? "\n\n" : "") + translatedPart.trim();
