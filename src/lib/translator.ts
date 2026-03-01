@@ -26,6 +26,7 @@ import * as path from "path";
 import { fileURLToPath } from "url";
 import consola from "consola";
 import { spawn } from "node:child_process";
+import { httpPost } from "./http-post";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -448,28 +449,14 @@ async function callOpenRouter(
     temperature: 0.3,
   };
 
-  let resp: Response;
-  try {
-    resp = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(timeoutMs),
-      // @ts-ignore - bun workaround for timeout being stuck to 5 min: https://github.com/oven-sh/bun/issues/16682
-      timeout: false,
-    });
-  } catch (err) {
-    const name = (err as Error).name;
-    if (name === "AbortError" || name === "TimeoutError") {
-      throw new Error(
-        `LLM API request timed out after ${Math.round(timeoutMs / 1000)}s. Use --timeout to increase the limit.`,
-      );
-    }
-    throw err;
-  }
+  const resp = await httpPost(
+    `${baseUrl.replace(/\/$/, "")}/chat/completions`,
+    body,
+    {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      timeoutMs,
+    },
+  );
 
   if (!resp.ok) {
     const txt = await resp.text();
