@@ -379,7 +379,7 @@ async function convertInputToMarkdown(
   const args = [
     inputPath,
     "-t",
-    "gfm", // GitHub-Flavored; generally LLM-friendly
+    "commonmark", // commonmark; generally LLM-friendly
     "-o",
     ctx.intermediateMarkdown,
     ...(ctx.inputFormat === "epub" ? ["--extract-media", "."] : []),
@@ -394,7 +394,15 @@ async function convertMarkdownToEpub(
   outputPath: string,
   coverImage: string | null,
 ): Promise<void> {
-  const args = [ctx.intermediateMarkdown, "-t", "epub2", "-o", outputPath];
+  const args = [
+    ctx.intermediateMarkdown,
+    "-f",
+    "commonmark",
+    "-t",
+    "epub2",
+    "-o",
+    outputPath,
+  ];
   if (coverImage) {
     args.push("--epub-cover-image", coverImage);
   }
