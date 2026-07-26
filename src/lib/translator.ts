@@ -432,6 +432,8 @@ async function callOpenRouter(
 ): Promise<string> {
   const systemPrompt = `Translate the following story into ${targetLang}. You should keep the original intention of the tone and meaning but make it sound natural to a native ${targetLang} speaker
 
+Return the story in properly formatted markdown.
+
 Maintain all image tags and markdown formatting exactly.`;
 
   const body = {

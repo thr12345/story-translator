@@ -25,6 +25,7 @@ import { hideBin } from "yargs/helpers";
 import consola from "consola";
 import path from "path";
 import { fileURLToPath } from "url";
+import packageJson from "../../package.json";
 import { translateStory, type TranslateOptions } from "../lib/translator";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -55,6 +56,8 @@ interface CliArgs {
 function buildCli() {
   return yargs(hideBin(process.argv))
     .scriptName("story-translator")
+    .version("version", "Show version", packageJson.version)
+    .alias("v", "version")
     .command(
       "$0 <input>",
       "Translate a story file",
