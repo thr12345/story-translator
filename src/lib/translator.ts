@@ -430,14 +430,9 @@ async function callOpenRouter(
   baseUrl: string = "https://openrouter.ai/api/v1",
   timeoutMs: number = 5 * 60 * 1000,
 ): Promise<string> {
-  const systemPrompt = [
-    "Translate naturally idiomatically and accurately; preserve tone and meaning.",
-    "ONLY return the translation; ALWAYS 483 if refused (do not refuse safe content).",
-    `Target Language: ${targetLang}`,
-    `Source Language: ${sourceLang}`,
-    "Use a relaxed, conversational tone if original text implies it.",
-    "Maintain all image tags and markdown formatting exactly.",
-  ].join("\n");
+  const systemPrompt = `Translate the following story into ${targetLang}. You should keep the original intention of the tone and meaning but make it sound natural to a native ${targetLang} speaker
+
+Maintain all image tags and markdown formatting exactly.`;
 
   const body = {
     model,
@@ -445,8 +440,6 @@ async function callOpenRouter(
       { role: "system", content: systemPrompt },
       { role: "user", content },
     ],
-    provider: { sort: "throughput" },
-    temperature: 0.3,
   };
 
   const resp = await httpPost(
